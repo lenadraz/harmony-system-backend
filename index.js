@@ -8,6 +8,31 @@ const authRoutes = require("./routes/auth.routes");
 const participantRoutes = require("./routes/participants.routes");
 
 const app = express();
+function normalizePhone(phone) {
+  return String(phone || "").replace(/[^\d]/g, "").trim();
+}
+
+function toParticipantDocId(userId) {
+  const s = String(userId || "").trim();
+  return s.startsWith("p") ? s : `p${s}`;
+}
+
+function toRouteParticipantId(docId) {
+  const s = String(docId || "").trim();
+  return s.startsWith("p") ? s.slice(1) : s;
+}
+
+async function getParticipantDocByRouteId(userId) {
+  const docId = toParticipantDocId(userId);
+
+  const querySpec = {
+    query: "SELECT TOP 1 * FROM c WHERE c.id = @id",
+    parameters: [{ name: "@id", value: docId }],
+  };
+
+  const { resources } = await container.items.query(querySpec).fetchAll();
+  return resources[0] || null;
+}
 
 app.use(cors());
 app.use(express.json());
@@ -148,38 +173,29 @@ app.post("/api/save", async (req, res) => {
   try {
     const { userId, targetId, remove } = req.body;
 
-    const { resource } = await container.item(userId, "event1").read();
+    const resource = await getParticipantDocByRouteId(userId);
 
-    let userDoc = resource;
-
-    if (!userDoc) {
-      userDoc = {
-        id: userId,
-        event_id: "event1",
-        saved: [],
-        met: [],
-      };
+    if (!resource) {
+      return res.status(404).json({ message: "User document not found" });
     }
 
-    userDoc.saved = userDoc.saved || [];
+    resource.saved = resource.saved || [];
 
     if (remove) {
-      userDoc.saved = userDoc.saved.filter(id => String(id) !== String(targetId));
+      resource.saved = resource.saved.filter(
+        (id) => String(id) !== String(targetId)
+      );
     } else {
-      if (!userDoc.saved.map(String).includes(String(targetId))) {
-        userDoc.saved.push(String(targetId));
+      if (!resource.saved.map(String).includes(String(targetId))) {
+        resource.saved.push(String(targetId));
       }
     }
 
-    let updated;
+    const { resource: updated } = await container
+      .item(resource.id, resource.event_id)
+      .replace(resource);
 
-    if (resource) {
-      ({ resource: updated } = await container.item(userId, "event1").replace(userDoc));
-    } else {
-      ({ resource: updated } = await container.items.create(userDoc));
-    }
-
-    res.json({ saved: updated.saved });
+    res.json({ saved: updated.saved || [] });
   } catch (error) {
     res.status(500).json({
       message: "Save failed",
@@ -188,43 +204,33 @@ app.post("/api/save", async (req, res) => {
   }
 });
 
-// ===== MET =====
 app.post("/api/met", async (req, res) => {
   try {
     const { userId, targetId, remove } = req.body;
 
-    const { resource } = await container.item(userId, "event1").read();
+    const resource = await getParticipantDocByRouteId(userId);
 
-    let userDoc = resource;
-
-    if (!userDoc) {
-      userDoc = {
-        id: userId,
-        event_id: "event1",
-        saved: [],
-        met: [],
-      };
+    if (!resource) {
+      return res.status(404).json({ message: "User document not found" });
     }
 
-    userDoc.met = userDoc.met || [];
+    resource.met = resource.met || [];
 
     if (remove) {
-      userDoc.met = userDoc.met.filter(id => String(id) !== String(targetId));
+      resource.met = resource.met.filter(
+        (id) => String(id) !== String(targetId)
+      );
     } else {
-      if (!userDoc.met.map(String).includes(String(targetId))) {
-        userDoc.met.push(String(targetId));
+      if (!resource.met.map(String).includes(String(targetId))) {
+        resource.met.push(String(targetId));
       }
     }
 
-    let updated;
+    const { resource: updated } = await container
+      .item(resource.id, resource.event_id)
+      .replace(resource);
 
-    if (resource) {
-      ({ resource: updated } = await container.item(userId, "event1").replace(userDoc));
-    } else {
-      ({ resource: updated } = await container.items.create(userDoc));
-    }
-
-    res.json({ met: updated.met });
+    res.json({ met: updated.met || [] });
   } catch (error) {
     res.status(500).json({
       message: "Met failed",
@@ -233,12 +239,9 @@ app.post("/api/met", async (req, res) => {
   }
 });
 
-// ===== GET SAVED =====
 app.get("/api/saved/:id", async (req, res) => {
   try {
-    const userId = req.params.id;
-
-    const { resource } = await container.item(userId, "event1").read();
+    const resource = await getParticipantDocByRouteId(req.params.id);
 
     if (!resource) {
       return res.json([]);
@@ -253,12 +256,9 @@ app.get("/api/saved/:id", async (req, res) => {
   }
 });
 
-// ===== GET MET =====
 app.get("/api/met/:id", async (req, res) => {
   try {
-    const userId = req.params.id;
-
-    const { resource } = await container.item(userId, "event1").read();
+    const resource = await getParticipantDocByRouteId(req.params.id);
 
     if (!resource) {
       return res.json([]);
@@ -268,6 +268,39 @@ app.get("/api/met/:id", async (req, res) => {
   } catch (error) {
     res.status(500).json({
       message: "Fetch met failed",
+      error: error.message,
+    });
+  }
+});
+app.post("/api/auth/phone-login", async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body.phone);
+
+    if (!phone) {
+      return res.status(400).json({ message: "Phone is required" });
+    }
+
+    const querySpec = {
+      query: "SELECT TOP 1 c.id, c.phone FROM c WHERE c.phone = @phone",
+      parameters: [{ name: "@phone", value: phone }],
+    };
+
+    const { resources } = await container.items.query(querySpec).fetchAll();
+    const user = resources[0];
+
+    if (!user) {
+      return res.status(404).json({ message: "Participant not found" });
+    }
+
+    res.json({
+      ok: true,
+      participantId: toRouteParticipantId(user.id), // למשל "2"
+      docId: user.id, // למשל "p2"
+      phone: user.phone,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Phone login failed",
       error: error.message,
     });
   }
