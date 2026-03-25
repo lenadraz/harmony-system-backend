@@ -150,21 +150,34 @@ app.post("/api/save", async (req, res) => {
 
     const { resource } = await container.item(userId, "event1").read();
 
-    resource.saved = resource.saved || [];
+    let userDoc = resource;
+
+    if (!userDoc) {
+      userDoc = {
+        id: userId,
+        event_id: "event1",
+        saved: [],
+        met: [],
+      };
+    }
+
+    userDoc.saved = userDoc.saved || [];
 
     if (remove) {
-      // ❌ REMOVE
-      resource.saved = resource.saved.filter(id => id !== targetId);
+      userDoc.saved = userDoc.saved.filter(id => String(id) !== String(targetId));
     } else {
-      // ➕ ADD
-      if (!resource.saved.includes(targetId)) {
-        resource.saved.push(targetId);
+      if (!userDoc.saved.map(String).includes(String(targetId))) {
+        userDoc.saved.push(String(targetId));
       }
     }
 
-    const { resource: updated } = await container
-      .item(userId, "event1")
-      .replace(resource);
+    let updated;
+
+    if (resource) {
+      ({ resource: updated } = await container.item(userId, "event1").replace(userDoc));
+    } else {
+      ({ resource: updated } = await container.items.create(userDoc));
+    }
 
     res.json({ saved: updated.saved });
   } catch (error) {
@@ -182,21 +195,34 @@ app.post("/api/met", async (req, res) => {
 
     const { resource } = await container.item(userId, "event1").read();
 
-    resource.met = resource.met || [];
+    let userDoc = resource;
+
+    if (!userDoc) {
+      userDoc = {
+        id: userId,
+        event_id: "event1",
+        saved: [],
+        met: [],
+      };
+    }
+
+    userDoc.met = userDoc.met || [];
 
     if (remove) {
-      // ❌ REMOVE
-      resource.met = resource.met.filter(id => id !== targetId);
+      userDoc.met = userDoc.met.filter(id => String(id) !== String(targetId));
     } else {
-      // ➕ ADD
-      if (!resource.met.includes(targetId)) {
-        resource.met.push(targetId);
+      if (!userDoc.met.map(String).includes(String(targetId))) {
+        userDoc.met.push(String(targetId));
       }
     }
 
-    const { resource: updated } = await container
-      .item(userId, "event1")
-      .replace(resource);
+    let updated;
+
+    if (resource) {
+      ({ resource: updated } = await container.item(userId, "event1").replace(userDoc));
+    } else {
+      ({ resource: updated } = await container.items.create(userDoc));
+    }
 
     res.json({ met: updated.met });
   } catch (error) {
@@ -214,6 +240,10 @@ app.get("/api/saved/:id", async (req, res) => {
 
     const { resource } = await container.item(userId, "event1").read();
 
+    if (!resource) {
+      return res.json([]);
+    }
+
     res.json(resource.saved || []);
   } catch (error) {
     res.status(500).json({
@@ -229,6 +259,10 @@ app.get("/api/met/:id", async (req, res) => {
     const userId = req.params.id;
 
     const { resource } = await container.item(userId, "event1").read();
+
+    if (!resource) {
+      return res.json([]);
+    }
 
     res.json(resource.met || []);
   } catch (error) {
