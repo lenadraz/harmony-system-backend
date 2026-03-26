@@ -193,9 +193,11 @@ router.put("/:id", async (req, res) => {
 
     // phone stays unchanged on purpose
 
-    const { resource: updated } = await container
-      .item(participant.id, participant.event_id)
-      .replace(participant);
+    const partitionKey = participant.event_id || participant.id
+
+const { resource: updated } = await container
+  .item(participant.id, partitionKey)
+  .replace(participant)
 
     return res.json({
       message: "Profile updated successfully",
@@ -417,10 +419,11 @@ router.delete("/:id/save/:targetId", async (req, res) => {
       (item) => item !== targetId
     );
 
-    const { resource: updated } = await container
-      .item(participant.id, participant.event_id)
-      .replace(participant);
+    const partitionKey = participant.event_id || participant.id
 
+const { resource: updated } = await container
+  .item(participant.id, partitionKey)
+  .replace(participant)
     return res.json({
       message: "Removed from saved successfully",
       saved: updated.saved,
@@ -459,10 +462,11 @@ router.post("/:id/met/:targetId", async (req, res) => {
     if (!participant.met.includes(targetId)) {
       participant.met.push(targetId);
     }
+const partitionKey = participant.event_id || participant.id
 
-    const { resource: updated } = await container
-      .item(participant.id, participant.event_id)
-      .replace(participant);
+const { resource: updated } = await container
+  .item(participant.id, partitionKey)
+  .replace(participant)
 
     return res.json({
       message: "Met saved successfully",
