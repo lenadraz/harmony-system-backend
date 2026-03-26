@@ -120,6 +120,7 @@ router.get("/", async (req, res) => {
   }
 });
 
+
 // Get participant by phone
 router.get("/phone/:phone", async (req, res) => {
   try {
@@ -162,6 +163,111 @@ router.get("/number/:num", async (req, res) => {
     console.error("Get participant by number error:", error.message);
     return res.status(500).json({
       message: "Server error",
+      error: error.message,
+    });
+  }
+});
+// UPDATE participant profile
+router.put("/:id", async (req, res) => {
+  try {
+    const participant = await getParticipantById(req.params.id);
+
+    if (!participant) {
+      return res.status(404).json({ message: "Participant not found" });
+    }
+
+    const allowedFields = [
+      "name",
+      "job",
+      "academic",
+      "professional",
+      "personal",
+      "image",
+    ];
+
+    for (const field of allowedFields) {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        participant[field] = cleanText(req.body[field]);
+      }
+    }
+
+    // phone stays unchanged on purpose
+
+    const { resource: updated } = await container
+      .item(participant.id, participant.event_id)
+      .replace(participant);
+
+    return res.json({
+      message: "Profile updated successfully",
+      participant: mapParticipant(updated),
+      refreshMatches: true,
+    });
+  } catch (error) {
+    console.error("Update profile error:", error.message);
+    return res.status(500).json({
+      message: "Update profile failed",
+      error: error.message,
+    });
+  }
+});
+// HIDE / UNHIDE participant profile
+router.patch("/:id/privacy", async (req, res) => {
+  try {
+    const participant = await getParticipantById(req.params.id);
+
+    if (!participant) {
+      return res.status(404).json({ message: "Participant not found" });
+    }
+
+    participant.hidden = Boolean(req.body.hidden);
+
+    const { resource: updated } = await container
+      .item(participant.id, participant.event_id)
+      .replace(participant);
+
+    return res.json({
+      message: participant.hidden
+        ? "Profile hidden successfully"
+        : "Profile is visible again",
+      participant: mapParticipant(updated),
+    });
+  } catch (error) {
+    console.error("Privacy update error:", error.message);
+    return res.status(500).json({
+      message: "Privacy update failed",
+      error: error.message,
+    });
+  }
+});
+// DELETE participant personal data
+router.delete("/:id", async (req, res) => {
+  try {
+    const participant = await getParticipantById(req.params.id);
+
+    if (!participant) {
+      return res.status(404).json({ message: "Participant not found" });
+    }
+
+    participant.name = "";
+    participant.job = "";
+    participant.academic = "";
+    participant.professional = "";
+    participant.personal = "";
+    participant.image = "";
+    participant.hidden = true;
+
+    const { resource: updated } = await container
+      .item(participant.id, participant.event_id)
+      .replace(participant);
+
+    return res.json({
+      message: "Participant data removed successfully",
+      participant: mapParticipant(updated),
+    });
+  } catch (error) {
+    console.error("Delete participant data error:", error.message);
+    return res.status(500).json({
+      message: "Delete participant data failed",
       error: error.message,
     });
   }
