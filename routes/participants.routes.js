@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const { container } = require("../config/db");
+function cleanText(text) {
+  if (text === null || text === undefined) return ''
+  return String(text).trim().replace(/\s+/g, ' ')
+}
 
 function normalizePhone(value) {
   if (!value) return "";
