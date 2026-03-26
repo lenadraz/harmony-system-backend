@@ -50,6 +50,9 @@ async function getParticipantById(id) {
     query: "SELECT * FROM c WHERE c.id = @id",
     parameters: [{ name: "@id", value: id }],
   };
+  function cleanText(value) {
+  return String(value || "").trim();
+}
 
   const { resources } = await container.items.query(querySpec).fetchAll();
   return resources[0] || null;
