@@ -30,8 +30,9 @@ async function getParticipantDocByRouteId(userId) {
     parameters: [{ name: "@id", value: docId }],
   };
 
-  const { resources } = await container.items.query(querySpec).fetchAll();
-  return resources[0] || null;
+const { resources } = await container.items
+  .query(querySpec, { enableCrossPartitionQuery: true })
+  .fetchAll();  return resources[0] || null;
 }
 
 app.use(cors());
@@ -311,8 +312,9 @@ app.post("/api/auth/phone-login", async (req, res) => {
       parameters: [{ name: "@phone", value: phone }],
     };
 
-    const { resources } = await container.items.query(querySpec).fetchAll();
-    const user = resources[0];
+const { resources } = await container.items
+  .query(querySpec, { enableCrossPartitionQuery: true })
+  .fetchAll();    const user = resources[0];
 
     if (!user) {
       return res.status(404).json({ message: "Participant not found" });
