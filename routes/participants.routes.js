@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { container } = require("../config/db");
+const crypto = require("crypto");
 
 function cleanText(text) {
   if (text === null || text === undefined) return "";
@@ -35,73 +36,88 @@ function mapParticipant(participant) {
   if (!participant) return null;
 
   return {
-    id: participant.id,
-    event_id: participant.event_id || null,
-    name: participant.name || "",
-    phone: normalizePhone(participant.phone),
-    job: participant.job || "",
-    academic: participant.academic || "",
-    professional: participant.professional || "",
-    personal: participant.personal || "",
-    image: participant.image || participant.thumbnail_url || "",
-    hidden: Boolean(participant.hidden),
-    saved: participant.saved || [],
-    met: participant.met || [],
-  };
+  id: participant.id,
+  eventId: participant.eventId || null,
+  rowNumber: participant.rowNumber || 0,
+  name: participant.name || "",
+
+phoneNumber: normalizePhone(participant.phoneNumber),
+  phone: normalizePhone(participant.phoneNumber),
+
+  jobTitle: participant.jobTitle || "",
+  job: participant.jobTitle || "",
+
+  academicResume: participant.academicResume || "",
+  academic: participant.academicResume || "",
+
+  professionalResume: participant.professionalResume || "",
+  professional: participant.professionalResume || "",
+
+  personalResume: participant.personalResume || "",
+  personal: participant.personalResume || "",
+
+  iWantToMeet: participant.iWantToMeet || "",
+
+  photoUrl: participant.photoUrl || "",
+  image: participant.photoUrl || "",
+
+  rawData: participant.rawData || {},
+  hidden: Boolean(participant.hidden),
+  saved: participant.saved || [],
+  met: participant.met || [],
+};
 }
 
-// helper: מביא משתתף לפי id
 async function getParticipantById(id) {
   const querySpec = {
     query: "SELECT * FROM c WHERE c.id = @id",
-    parameters: [{ name: "@id", value: id }],
+    parameters: [{ name: "@id", value: String(id).trim() }],
   };
 
-  const { resources } = await container.items.query(querySpec).fetchAll();
+  const { resources } = await container.items
+    .query(querySpec, { enableCrossPartitionQuery: true })
+    .fetchAll();
+
   return resources[0] || null;
 }
 
-// helper: replace אחיד ובטוח
 async function replaceParticipant(participant) {
-  const partitionKey =
-    participant.event_id !== undefined ? participant.event_id : undefined;
-
   const { resource } = await container
-    .item(participant.id, partitionKey)
+    .item(participant.id, participant.eventId)
     .replace(participant);
 
   return resource;
 }
 
-// helper: מביא משתתף לפי טלפון
 async function getParticipantByPhone(phone) {
   const normalizedPhone = normalizePhone(phone);
 
   const querySpec = {
-    query: "SELECT * FROM c WHERE c.phone = @phone",
+    query: "SELECT * FROM c WHERE c.phoneNumber = @phone",
     parameters: [{ name: "@phone", value: normalizedPhone }],
   };
 
-  const { resources } = await container.items.query(querySpec).fetchAll();
+  const { resources } = await container.items
+    .query(querySpec, { enableCrossPartitionQuery: true })
+    .fetchAll();
 
   if (resources.length) {
     return resources[0];
   }
 
-  // fallback - אם ב-DB נשמר בפורמט אחר
-  const allQuery = {
-    query: "SELECT * FROM c",
-  };
+  const allQuery = { query: "SELECT * FROM c" };
+  const { resources: allParticipants } = await container.items
+    .query(allQuery, { enableCrossPartitionQuery: true })
+    .fetchAll();
 
-  const { resources: allParticipants } = await container.items.query(allQuery).fetchAll();
   return (
     allParticipants.find(
-      (participant) => normalizePhone(participant.phone) === normalizedPhone
+      (participant) =>
+        normalizePhone(participant.phoneNumber) === normalizedPhone
     ) || null
   );
 }
 
-// helper: מביא רשימת משתתפים לפי ids
 async function getParticipantsByIds(ids) {
   if (!ids || !ids.length) return [];
 
@@ -110,24 +126,23 @@ async function getParticipantsByIds(ids) {
     parameters: [{ name: "@ids", value: ids }],
   };
 
-  const { resources } = await container.items.query(querySpec).fetchAll();
+  const { resources } = await container.items
+    .query(querySpec, { enableCrossPartitionQuery: true })
+    .fetchAll();
+
   return resources;
 }
 
 // Get all participants
 router.get("/", async (req, res) => {
   try {
-    const querySpec = {
-      query: "SELECT * FROM c",
-    };
+    const querySpec = { query: "SELECT * FROM c" };
+    const { resources } = await container.items
+      .query(querySpec, { enableCrossPartitionQuery: true })
+      .fetchAll();
 
-    const { resources } = await container.items.query(querySpec).fetchAll();
-
-    const participants = resources.map(mapParticipant);
-
-    return res.json(participants);
+    return res.json(resources.map(mapParticipant));
   } catch (error) {
-    console.error("Get all participants error:", error.message);
     return res.status(500).json({
       message: "Failed to get participants",
       error: error.message,
@@ -146,7 +161,6 @@ router.get("/phone/:phone", async (req, res) => {
 
     return res.json(mapParticipant(participant));
   } catch (error) {
-    console.error("Get participant by phone error:", error.message);
     return res.status(500).json({
       message: "Server error",
       error: error.message,
@@ -154,19 +168,25 @@ router.get("/phone/:phone", async (req, res) => {
   }
 });
 
-// Get participant by participant number
-// תומך גם אם שולחים 1 ואז מחפש p1
+// Get participant by row number
 router.get("/number/:num", async (req, res) => {
   try {
-    const rawNum = req.params.num;
-    const num = parseInt(rawNum, 10);
+    const rowNumber = parseInt(req.params.num, 10);
 
-    if (isNaN(num)) {
-      return res.status(400).json({ message: "Invalid participant number" });
+    if (isNaN(rowNumber)) {
+      return res.status(400).json({ message: "Invalid row number" });
     }
 
-    const participantId = `p${num}`;
-    const participant = await getParticipantById(participantId);
+    const querySpec = {
+      query: "SELECT TOP 1 * FROM c WHERE c.rowNumber = @rowNumber",
+      parameters: [{ name: "@rowNumber", value: rowNumber }],
+    };
+
+    const { resources } = await container.items
+      .query(querySpec, { enableCrossPartitionQuery: true })
+      .fetchAll();
+
+    const participant = resources[0];
 
     if (!participant) {
       return res.status(404).json({ message: "Participant not found" });
@@ -174,7 +194,6 @@ router.get("/number/:num", async (req, res) => {
 
     return res.json(mapParticipant(participant));
   } catch (error) {
-    console.error("Get participant by number error:", error.message);
     return res.status(500).json({
       message: "Server error",
       error: error.message,
@@ -182,7 +201,43 @@ router.get("/number/:num", async (req, res) => {
   }
 });
 
-// UPDATE participant profile
+// Create participant
+router.post("/", async (req, res) => {
+  try {
+    const body = req.body;
+
+    const newParticipant = {
+      id: crypto.randomUUID(),
+      eventId: body.eventId || "",
+      rowNumber: body.rowNumber || 0,
+      name: body.name || "",
+      phoneNumber: normalizePhone(body.phoneNumber || body.phone || ""),
+      jobTitle: body.jobTitle || "",
+      academicResume: body.academicResume || "",
+      professionalResume: body.professionalResume || "",
+      personalResume: body.personalResume || "",
+      iWantToMeet: body.iWantToMeet || "",
+      photoUrl: body.photoUrl || "",
+      rawData: body.rawData || {},
+      hidden: false,
+      saved: [],
+      met: [],
+    };
+
+    await container.items.create(newParticipant);
+
+    return res.status(201).json({
+      participant: mapParticipant(newParticipant),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Create participant failed",
+      error: error.message,
+    });
+  }
+});
+
+// Update participant profile
 router.put("/:id", async (req, res) => {
   try {
     const participant = await getParticipantById(req.params.id);
@@ -191,22 +246,33 @@ router.put("/:id", async (req, res) => {
       return res.status(404).json({ message: "Participant not found" });
     }
 
-    const allowedFields = [
-      "name",
-      "job",
-      "academic",
-      "professional",
-      "personal",
-      "image",
-    ];
+    const fieldMap = {
+  name: "name",
 
-    for (const field of allowedFields) {
-      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-        participant[field] = cleanText(req.body[field]);
+  job: "jobTitle",
+  jobTitle: "jobTitle",
+
+  academic: "academicResume",
+  academicResume: "academicResume",
+
+  professional: "professionalResume",
+  professionalResume: "professionalResume",
+
+  personal: "personalResume",
+  personalResume: "personalResume",
+
+  image: "photoUrl",
+  photoUrl: "photoUrl",
+
+  iWantToMeet: "iWantToMeet",
+};
+
+    for (const [bodyField, docField] of Object.entries(fieldMap)) {
+      if (Object.prototype.hasOwnProperty.call(req.body, bodyField)) {
+        participant[docField] = cleanText(req.body[bodyField]);
       }
     }
 
-    // phone stays unchanged on purpose
     const updated = await replaceParticipant(participant);
 
     return res.json({
@@ -215,7 +281,6 @@ router.put("/:id", async (req, res) => {
       refreshMatches: true,
     });
   } catch (error) {
-    console.error("Update profile error:", error.message);
     return res.status(500).json({
       message: "Update profile failed",
       error: error.message,
@@ -223,7 +288,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// HIDE / UNHIDE participant profile
+// Hide / unhide participant profile
 router.patch("/:id/privacy", async (req, res) => {
   try {
     const participant = await getParticipantById(req.params.id);
@@ -243,7 +308,6 @@ router.patch("/:id/privacy", async (req, res) => {
       participant: mapParticipant(updated),
     });
   } catch (error) {
-    console.error("Privacy update error:", error.message);
     return res.status(500).json({
       message: "Privacy update failed",
       error: error.message,
@@ -251,7 +315,7 @@ router.patch("/:id/privacy", async (req, res) => {
   }
 });
 
-// DELETE participant personal data
+// Delete participant personal data
 router.delete("/:id", async (req, res) => {
   try {
     const participant = await getParticipantById(req.params.id);
@@ -261,11 +325,12 @@ router.delete("/:id", async (req, res) => {
     }
 
     participant.name = "";
-    participant.job = "";
-    participant.academic = "";
-    participant.professional = "";
-    participant.personal = "";
-    participant.image = "";
+    participant.jobTitle = "";
+    participant.academicResume = "";
+    participant.professionalResume = "";
+    participant.personalResume = "";
+    participant.iWantToMeet = "";
+    participant.photoUrl = "";
     participant.hidden = true;
 
     const updated = await replaceParticipant(participant);
@@ -275,7 +340,6 @@ router.delete("/:id", async (req, res) => {
       participant: mapParticipant(updated),
     });
   } catch (error) {
-    console.error("Delete participant data error:", error.message);
     return res.status(500).json({
       message: "Delete participant data failed",
       error: error.message,
@@ -283,7 +347,7 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// GET saved list ids
+// Get saved list ids
 router.get("/:id/saved", async (req, res) => {
   try {
     const participant = await getParticipantById(req.params.id);
@@ -292,11 +356,8 @@ router.get("/:id/saved", async (req, res) => {
       return res.status(404).json({ message: "Participant not found" });
     }
 
-    return res.json({
-      saved: participant.saved || [],
-    });
+    return res.json({ saved: participant.saved || [] });
   } catch (error) {
-    console.error("Get saved error:", error.message);
     return res.status(500).json({
       message: "Get saved failed",
       error: error.message,
@@ -304,7 +365,7 @@ router.get("/:id/saved", async (req, res) => {
   }
 });
 
-// GET saved full data
+// Get saved full data
 router.get("/:id/saved/full", async (req, res) => {
   try {
     const participant = await getParticipantById(req.params.id);
@@ -318,7 +379,6 @@ router.get("/:id/saved/full", async (req, res) => {
 
     return res.json(savedParticipants.map(mapParticipant));
   } catch (error) {
-    console.error("Get saved full error:", error.message);
     return res.status(500).json({
       message: "Get saved full failed",
       error: error.message,
@@ -326,7 +386,7 @@ router.get("/:id/saved/full", async (req, res) => {
   }
 });
 
-// GET met list ids
+// Get met list ids
 router.get("/:id/met", async (req, res) => {
   try {
     const participant = await getParticipantById(req.params.id);
@@ -335,11 +395,8 @@ router.get("/:id/met", async (req, res) => {
       return res.status(404).json({ message: "Participant not found" });
     }
 
-    return res.json({
-      met: participant.met || [],
-    });
+    return res.json({ met: participant.met || [] });
   } catch (error) {
-    console.error("Get met error:", error.message);
     return res.status(500).json({
       message: "Get met failed",
       error: error.message,
@@ -347,7 +404,7 @@ router.get("/:id/met", async (req, res) => {
   }
 });
 
-// GET met full data
+// Get met full data
 router.get("/:id/met/full", async (req, res) => {
   try {
     const participant = await getParticipantById(req.params.id);
@@ -361,7 +418,6 @@ router.get("/:id/met/full", async (req, res) => {
 
     return res.json(metParticipants.map(mapParticipant));
   } catch (error) {
-    console.error("Get met full error:", error.message);
     return res.status(500).json({
       message: "Get met full failed",
       error: error.message,
@@ -369,7 +425,7 @@ router.get("/:id/met/full", async (req, res) => {
   }
 });
 
-// SAVE - add targetId to saved[]
+// Save participant
 router.post("/:id/save/:targetId", async (req, res) => {
   try {
     const { id, targetId } = req.params;
@@ -379,7 +435,6 @@ router.post("/:id/save/:targetId", async (req, res) => {
     }
 
     const participant = await getParticipantById(id);
-
     if (!participant) {
       return res.status(404).json({ message: "Participant not found" });
     }
@@ -402,7 +457,6 @@ router.post("/:id/save/:targetId", async (req, res) => {
       saved: updated.saved,
     });
   } catch (error) {
-    console.error("Save error:", error.message);
     return res.status(500).json({
       message: "Save failed",
       error: error.message,
@@ -410,13 +464,12 @@ router.post("/:id/save/:targetId", async (req, res) => {
   }
 });
 
-// UNSAVE - remove targetId from saved[]
+// Unsave participant
 router.delete("/:id/save/:targetId", async (req, res) => {
   try {
     const { id, targetId } = req.params;
 
     const participant = await getParticipantById(id);
-
     if (!participant) {
       return res.status(404).json({ message: "Participant not found" });
     }
@@ -432,7 +485,6 @@ router.delete("/:id/save/:targetId", async (req, res) => {
       saved: updated.saved,
     });
   } catch (error) {
-    console.error("Unsave error:", error.message);
     return res.status(500).json({
       message: "Unsave failed",
       error: error.message,
@@ -440,7 +492,7 @@ router.delete("/:id/save/:targetId", async (req, res) => {
   }
 });
 
-// MET - add targetId to met[]
+// Mark met
 router.post("/:id/met/:targetId", async (req, res) => {
   try {
     const { id, targetId } = req.params;
@@ -450,7 +502,6 @@ router.post("/:id/met/:targetId", async (req, res) => {
     }
 
     const participant = await getParticipantById(id);
-
     if (!participant) {
       return res.status(404).json({ message: "Participant not found" });
     }
@@ -473,7 +524,6 @@ router.post("/:id/met/:targetId", async (req, res) => {
       met: updated.met,
     });
   } catch (error) {
-    console.error("Met error:", error.message);
     return res.status(500).json({
       message: "Met failed",
       error: error.message,
@@ -481,13 +531,12 @@ router.post("/:id/met/:targetId", async (req, res) => {
   }
 });
 
-// UNMET - remove targetId from met[]
+// Unmark met
 router.delete("/:id/met/:targetId", async (req, res) => {
   try {
     const { id, targetId } = req.params;
 
     const participant = await getParticipantById(id);
-
     if (!participant) {
       return res.status(404).json({ message: "Participant not found" });
     }
@@ -503,7 +552,6 @@ router.delete("/:id/met/:targetId", async (req, res) => {
       met: updated.met,
     });
   } catch (error) {
-    console.error("Unmet error:", error.message);
     return res.status(500).json({
       message: "Unmet failed",
       error: error.message,
@@ -522,7 +570,6 @@ router.get("/:id", async (req, res) => {
 
     return res.json(mapParticipant(participant));
   } catch (error) {
-    console.error("Get participant by id error:", error.message);
     return res.status(500).json({
       message: "Server error",
       error: error.message,
