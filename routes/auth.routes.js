@@ -29,31 +29,21 @@ function normalizePhone(value) {
 router.post("/phone-login", async (req, res) => {
   try {
     const phone = req.body.phone || req.body.phoneNumber;
-    const eventId = req.body.eventId;
+    const eventId = String(req.body.eventId || "").trim();
 
-    if (!phone) {
+    if (!phone || !eventId) {
       return res.status(400).json({
-        message: "phone is required",
-      });
-    }
-
-    if (!eventId) {
-      return res.status(400).json({
-        message: "eventId is required",
+        message: "phone and eventId are required",
       });
     }
 
     const normalizedPhone = normalizePhone(phone);
 
     const querySpec = {
-      query: `
-        SELECT TOP 1 * FROM c
-        WHERE c.eventId = @eventId
-        AND c.phoneNumber = @phoneNumber
-      `,
+      query: "SELECT TOP 1 * FROM c WHERE c.phoneNumber = @phoneNumber AND c.eventId = @eventId",
       parameters: [
-        { name: "@eventId", value: eventId },
         { name: "@phoneNumber", value: normalizedPhone },
+        { name: "@eventId", value: eventId },
       ],
     };
 
@@ -61,28 +51,11 @@ router.post("/phone-login", async (req, res) => {
       .query(querySpec, { enableCrossPartitionQuery: true })
       .fetchAll();
 
-    let participant = resources[0];
-
-    if (!participant) {
-      const allQuery = {
-        query: "SELECT * FROM c WHERE c.eventId = @eventId",
-        parameters: [{ name: "@eventId", value: eventId }],
-      };
-
-      const { resources: allParticipants } = await container.items
-        .query(allQuery, { enableCrossPartitionQuery: true })
-        .fetchAll();
-
-      participant = allParticipants.find(
-        (p) =>
-          p.eventId === eventId &&
-          normalizePhone(p.phoneNumber) === normalizedPhone
-      );
-    }
+    const participant = resources[0];
 
     if (!participant) {
       return res.status(404).json({
-        message: "Participant not found for this event",
+        message: "Participant not found",
       });
     }
 
