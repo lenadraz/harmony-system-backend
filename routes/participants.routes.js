@@ -704,3 +704,27 @@ router.get("/:id", async (req, res) => {
 });
 
 module.exports = router;
+router.post("/skipped", async (req, res) => {
+  try {
+    const { userId, targetId, remove } = req.body;
+
+    const { resource } = await container.item(userId, userId).read();
+
+    resource.skipped = resource.skipped || [];
+
+    if (remove) {
+      resource.skipped = resource.skipped.filter(id => id !== targetId);
+    } else {
+      if (!resource.skipped.includes(targetId)) {
+        resource.skipped.push(targetId);
+      }
+    }
+
+    await container.item(userId, userId).replace(resource);
+
+    res.json({ skipped: resource.skipped });
+
+  } catch (err) {
+    res.status(500).json({ message: "Skip failed", error: err.message });
+  }
+});
